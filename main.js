@@ -3,42 +3,85 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const OSRM = require('osrm.js')
-
-const osrm = new OSRM('https://router.project-osrm.org')
+const co = require('co')
+const osrm = new OSRM('http://127.0.0.1:5000')
 
 const readStream = fs.createReadStream(path.resolve(__dirname, './data/shenzhen_sample.csv'))
-
+const writeStream = fs.createWriteStream(path.resolve(__dirname, './data/result.csv'))
 
 const rl = readline.createInterface({
     input: readStream
 })
+const step = 4
 
-
-let coords = ''
+let coordinates = []
 rl.on('line', line => {
     let arr = line.split(',')
     if (arr[0] == 'XCoord') {
         return
     }
 
-    coords += arr[0] + ',' + arr[1] + ';'
+    coordinates.push([
+		arr[0],arr[1]
+	])
 })
 
+function getTablePromise(coordinates, sources) {
+	return new Promise((resolve, reject) => {
+		osrm.table({
+			coordinates: coordinates,
+			sources: sources,
+			
+		}, (err, result) => {
+			if (err) {				
+				return reject(err)
+			}
+			if (result.code !== 'Ok') {
+				return reject(result.code)
+			}
 
-rl.on('close', () => {
-    console.log(coords)
-
-    osrm.table({
-        coordinates: [[13.438640, 52.519930], [13.415852, 52.513191], [13.333086, 52.4224]],
-        sources: [0],
-        destinations: [1, 2],
-    }, (err, result) => {
-        if (err) {
-            console.log(err)
-        }
-        console.log(result);
-    });
+			resolve(result)
+								
+		});
+	})
+}
 
 
+function* getDistance (coordinates, i, step) {
+
+	let sources = []
+	for (let j = 0; j < step; j++) {
+		sources.push(j + i)
+	}
+	let result = yield getTablePromise(coordinates, sources);
+	let durations = result.durations
+	for (let j = 0; j < durations.length; j++) {
+		let duration = result.durations[0]
+		writeStream.write(duration.join(',') + os.EOL)
+		console.log('the' + (i + j) + 'th query')
+	}
+	// let queries = []
+	// for (let j = i; j < i + step; j++) {
+	// 	queries.push(getTablePromise(coordinates, j))
+	// }
+	// let results = yield queries
+	// for (let j = 0; j < results.length; j++) {
+	// 	let result = results[j]
+	// 	let duration = result.durations[0]
+	// 	writeStream.write(duration.join(',') + os.EOL)
+	// 	console.log('the' + (i + j) + 'th query')
+	// }
+
+}
+
+rl.on('close', () => {    
+		let begin = new Date()
+	co(function* () {
+		for (let i =0; i < coordinates.length; i += step) {
+			yield* getDistance(coordinates, i, step)
+		}
+		console.log('elapse: ' + (new Date() - begin))
+	})
+		
 
 })
